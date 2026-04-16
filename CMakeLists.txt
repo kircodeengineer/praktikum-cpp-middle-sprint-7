@@ -23,6 +23,7 @@ file(GLOB HEADER_FILES "${CMAKE_SOURCE_DIR}/include/*.hpp")
 add_library(${PROJECT_NAME}_imp STATIC
   "${CMAKE_SOURCE_DIR}/src/main.cpp"
   "${CMAKE_SOURCE_DIR}/src/headers.cpp"
+  "${CMAKE_SOURCE_DIR}/src/coro_iter_headers.cpp"
   ${HEADER_FILES})
 
 # Добавляем в проект используемые сторонние библиотеки
