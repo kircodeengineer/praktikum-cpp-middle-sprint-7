@@ -15,7 +15,24 @@ void iterHeaders(std::string_view req, Callback &&callback) {
 }
 
 std::pair<std::string, std::string> findHostPort(std::string_view req) {
-    // code here
+    std::string host{};
+    std::string port{"80"};
+
+    iterHeaders(req, [&](std::string_view name, std::string_view value) {
+        if (name == "Host") {
+            auto pos = value.find(':');
+            if (pos != std::string_view::npos) {
+                host = std::string(value.substr(0, pos));
+                port = std::string(value.substr(pos + 1));
+            } else
+                host = std::string(value);
+        }
+    });
+
+    if (host.empty())
+        throw std::runtime_error("Host header not found");
+
+    return {host, port};
 }
 
 std::optional<size_t> findContentLength(std::string_view rsp) {

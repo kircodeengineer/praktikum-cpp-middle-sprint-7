@@ -83,12 +83,12 @@ TEST(iterHeaders, MultipleSameHeaders) {
 }
 
 TEST(findHostPort, Simple) {
-    // code here
+    auto [host, port] = findHostPort("Host: test.ru:8080\r\n");
+    EXPECT_EQ(host, "test.ru");
+    EXPECT_EQ(port, "8080");
 }
 
-TEST(findHostPort, NoHost) {
-    // code here
-}
+TEST(findHostPort, NoHost) { EXPECT_THROW(findHostPort(""), std::runtime_error); }
 
 TEST(findContentLength, Simple) {
     // code here
