@@ -14,7 +14,9 @@ using boost::asio::async_read_until;
 using boost::asio::awaitable;
 using boost::asio::buffer;
 using boost::asio::co_spawn;
+using boost::asio::detached;
 using boost::asio::dynamic_buffer;
+using boost::asio::io_context;
 using boost::asio::io_service;
 using boost::asio::transfer_at_least;
 using boost::asio::use_awaitable;
@@ -23,8 +25,47 @@ using boost::system::error_code;
 
 constexpr std::string_view delimiter = "\r\n\r\n";
 
-awaitable<void> session(tcp::socket client_socket, io_service &io_service) {
-    // code here
+awaitable<void> transfer(tcp::socket &from, tcp::socket &to) {
+    std::array<char, 4096> buf;
+    try {
+        for (;;) {
+            size_t n{co_await async_read(from, buffer(buf), transfer_at_least(1), use_awaitable)};
+            co_await async_write(to, buffer(buf, n), use_awaitable);
+        }
+    } catch (...) {
+    }
+}
+
+awaitable<void> session(tcp::socket client_socket, io_context &io) {
+    std::string client_storage;
+    auto client_buf{dynamic_buffer(client_storage)};
+
+    try {
+        size_t n{co_await async_read_until(client_socket, client_buf, delimiter, use_awaitable)};
+
+        std::string_view headers_view{client_storage.data(), n};
+        auto [host, port] = findHostPort(headers_view);
+
+        tcp::resolver resolver(io);
+        tcp::socket server_socket(io);
+
+        auto endpoints{co_await resolver.async_resolve(host, port, use_awaitable)};
+        co_await server_socket.async_connect(*endpoints.begin(), use_awaitable);
+
+        co_await async_write(server_socket, buffer(client_storage), use_awaitable);
+
+        co_spawn(client_socket.get_executor(), transfer(client_socket, server_socket), detached);
+        co_await transfer(server_socket, client_socket);
+
+    } catch (const std::exception &e) {
+        error_code ec;
+        std::string err{"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"};
+        boost::asio::write(client_socket, buffer(err), ec);
+    }
+
+    error_code ec;
+    client_socket.shutdown(tcp::socket::shutdown_both, ec);
+    client_socket.close(ec);
 }
 
 class Server {
@@ -36,8 +77,11 @@ public:
 
 private:
     void do_accept() {
-        acceptor_.async_accept(socket_, [this](error_code ec) {
-            // code here
+        acceptor_.async_accept(socket_, [this](boost::system::error_code ec) {
+            if (!ec) {
+                co_spawn(io_service_, session(std::move(socket_), std::ref(io_service_)), boost::asio::detached);
+            }
+            do_accept();
         });
     }
 
