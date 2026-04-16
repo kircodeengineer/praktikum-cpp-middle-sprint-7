@@ -91,9 +91,12 @@ TEST(findHostPort, Simple) {
 TEST(findHostPort, NoHost) { EXPECT_THROW(findHostPort(""), std::runtime_error); }
 
 TEST(findContentLength, Simple) {
-    // code here
+    auto len{findContentLength("Content-Length: 1234\r\n")};
+    EXPECT_TRUE(len.has_value());
+    EXPECT_EQ(*len, 1234);
 }
 
 TEST(findContentLength, NoContentLength) {
-    // code here
+    auto len{findContentLength("")};
+    EXPECT_EQ(len, std::nullopt);
 }

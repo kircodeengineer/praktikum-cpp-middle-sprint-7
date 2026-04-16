@@ -36,5 +36,15 @@ std::pair<std::string, std::string> findHostPort(std::string_view req) {
 }
 
 std::optional<size_t> findContentLength(std::string_view rsp) {
-    // code here
+    std::optional<size_t> result;
+    iterHeaders(rsp, [&](std::string_view name, std::string_view value) {
+        if (name == "Content-Length") {
+            try {
+                result = std::stoull(std::string(value));
+            } catch (...) {
+                result = std::nullopt;
+            }
+        }
+    });
+    return result;
 }
