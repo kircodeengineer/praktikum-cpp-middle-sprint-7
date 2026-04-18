@@ -2,6 +2,7 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/co_spawn.hpp>
+#include <boost/asio/completion_condition.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/read_until.hpp>
@@ -19,18 +20,36 @@ using boost::asio::dynamic_buffer;
 using boost::asio::io_context;
 using boost::asio::io_service;
 using boost::asio::transfer_at_least;
+using boost::asio::transfer_exactly;
 using boost::asio::use_awaitable;
 using boost::asio::ip::tcp;
 using boost::system::error_code;
 
 constexpr std::string_view delimiter = "\r\n\r\n";
 
-awaitable<void> transfer(tcp::socket &from, tcp::socket &to) {
-    std::array<char, 4096> buf;
+constexpr size_t MAX_HEADER_SIZE = 8192;
+constexpr size_t BUFFER_SIZE = 4096;
+
+awaitable<void> transfer(tcp::socket &from, tcp::socket &to, std::optional<size_t> expected_size) {
     try {
-        for (;;) {
-            size_t n{co_await async_read(from, buffer(buf), transfer_at_least(1), use_awaitable)};
-            co_await async_write(to, buffer(buf, n), use_awaitable);
+        if (expected_size.has_value()) {
+            auto remaining{expected_size.value()};
+            std::array<char, BUFFER_SIZE> buf;
+
+            while (remaining > 0) {
+                auto n{std::min(remaining, BUFFER_SIZE)};
+                auto bytes_read{co_await async_read(from, buffer(buf, n), transfer_at_least(1), use_awaitable)};
+                if (bytes_read == 0)
+                    break;
+                co_await async_write(to, buffer(buf, bytes_read), use_awaitable);
+                remaining -= bytes_read;
+            }
+        } else {
+            std::array<char, BUFFER_SIZE> buf;
+            for (;;) {
+                auto n{co_await async_read(from, buffer(buf), transfer_at_least(1), use_awaitable)};
+                co_await async_write(to, buffer(buf, n), use_awaitable);
+            }
         }
     } catch (...) {
     }
@@ -41,21 +60,36 @@ awaitable<void> session(tcp::socket client_socket, io_context &io) {
     auto client_buf{dynamic_buffer(client_storage)};
 
     try {
-        size_t n{co_await async_read_until(client_socket, client_buf, delimiter, use_awaitable)};
+        auto n{co_await async_read_until(client_socket, client_buf, delimiter, use_awaitable)};
+
+        if (n > MAX_HEADER_SIZE)
+            throw std::runtime_error("Request headers too large");
 
         std::string_view headers_view{client_storage.data(), n};
         auto [host, port] = findHostPort(headers_view);
+        auto content_length{findContentLength(headers_view)};
 
-        tcp::resolver resolver(io);
-        tcp::socket server_socket(io);
+        tcp::resolver resolver{io};
+        tcp::socket server_socket{io};
 
         auto endpoints{co_await resolver.async_resolve(host, port, use_awaitable)};
         co_await server_socket.async_connect(*endpoints.begin(), use_awaitable);
 
         co_await async_write(server_socket, buffer(client_storage), use_awaitable);
 
-        co_spawn(client_socket.get_executor(), transfer(client_socket, server_socket), detached);
-        co_await transfer(server_socket, client_socket);
+        if (content_length.has_value()) {
+            auto already_read{client_storage.size() - n};
+            auto remaining{content_length.value() - already_read};
+
+            if (remaining > 0) {
+                co_await async_read(client_socket, client_buf, transfer_exactly(remaining), use_awaitable);
+                co_await async_write(server_socket, buffer(client_storage.data() + n, remaining), use_awaitable);
+            }
+        }
+
+        co_spawn(client_socket.get_executor(), transfer(server_socket, client_socket, std::nullopt), detached);
+
+        co_await transfer(client_socket, server_socket, std::nullopt);
 
     } catch (const std::exception &e) {
         error_code ec;
