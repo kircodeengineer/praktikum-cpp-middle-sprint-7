@@ -39,11 +39,13 @@ std::optional<size_t> findContentLength(std::string_view rsp) {
     std::optional<size_t> result;
     iterHeaders(rsp, [&](std::string_view name, std::string_view value) {
         if (name == "Content-Length") {
-            try {
-                result = std::stoull(std::string(value));
-            } catch (...) {
+            size_t content_length{};
+            auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), content_length);
+
+            if (ec == std::errc())
+                result = content_length;
+            else
                 result = std::nullopt;
-            }
         }
     });
     return result;
