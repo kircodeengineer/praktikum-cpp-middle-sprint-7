@@ -79,7 +79,7 @@ awaitable<void> transfer_limited(boost::asio::ip::tcp::socket &from, boost::asio
             chunk_size = piece.size();
 
         try {
-            size_t n = co_await from.async_read_some(boost::asio::buffer(piece, chunk_size), use_awaitable);
+            auto n{co_await from.async_read_some(boost::asio::buffer(piece, chunk_size), use_awaitable)};
             if (n == 0)
                 break;
 
