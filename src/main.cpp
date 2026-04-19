@@ -38,7 +38,7 @@ awaitable<std::string> read_headers(boost::asio::ip::tcp::socket &socket, boost:
     static const std::size_t CHUNK_SIZE{1024};
     while (buf.size() <= MAX_HEADER_SIZE) {
         try {
-            size_t n = co_await socket.async_read_some(buf.prepare(CHUNK_SIZE), use_awaitable);
+            auto n{co_await socket.async_read_some(buf.prepare(CHUNK_SIZE), use_awaitable)};
             if (n == 0)
                 throw std::runtime_error{"Client closed connection"};
 
