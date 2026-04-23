@@ -53,7 +53,8 @@ awaitable<std::string> read_headers(boost::asio::ip::tcp::socket &socket, boost:
             }
         } catch (const boost::system::system_error &e) {
             auto code = e.code();
-            if (code == boost::asio::error::connection_reset || code == boost::asio::error::timed_out)
+            if (code == boost::asio::error::connection_reset || code == boost::asio::error::timed_out ||
+                code == boost::asio::error::eof)
                 throw std::runtime_error{"Connection lost: " + code.message()};
 
             throw;
@@ -91,7 +92,8 @@ awaitable<void> transfer_limited(boost::asio::ip::tcp::socket &from, boost::asio
 
         } catch (const boost::system::system_error &e) {
             auto code = e.code();
-            if (code == boost::asio::error::connection_reset || code == boost::asio::error::timed_out) {
+            if (code == boost::asio::error::connection_reset || code == boost::asio::error::timed_out ||
+                code == boost::asio::error::eof) {
                 break;
             }
             throw;
