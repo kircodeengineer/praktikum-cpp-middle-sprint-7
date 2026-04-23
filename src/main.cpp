@@ -53,7 +53,8 @@ awaitable<std::string> read_headers(boost::asio::ip::tcp::socket &socket, boost:
             }
         } catch (const boost::system::system_error &e) {
             auto code = e.code();
-            if (code == boost::asio::error::connection_reset || code == boost::asio::error::timed_out)
+            if (code == boost::asio::error::connection_reset || code == boost::asio::error::timed_out ||
+                code == boost::asio::error::eof)
                 throw std::runtime_error{"Connection lost: " + code.message()};
 
             throw;
@@ -91,7 +92,8 @@ awaitable<void> transfer_limited(boost::asio::ip::tcp::socket &from, boost::asio
 
         } catch (const boost::system::system_error &e) {
             auto code = e.code();
-            if (code == boost::asio::error::connection_reset || code == boost::asio::error::timed_out) {
+            if (code == boost::asio::error::connection_reset || code == boost::asio::error::timed_out ||
+                code == boost::asio::error::eof) {
                 break;
             }
             throw;
@@ -112,43 +114,45 @@ awaitable<void> session(tcp::socket client_socket, io_context &io) {
 
         tcp::resolver resolver{io};
         tcp::socket server_socket{io};
-        auto endpoints = co_await resolver.async_resolve(host, port, use_awaitable);
+        auto endpoints{co_await resolver.async_resolve(host, port, use_awaitable)};
         co_await server_socket.async_connect(*endpoints.begin(), use_awaitable);
 
         co_await async_write(server_socket, buffer(req_headers_str), use_awaitable);
 
-        if (content_length.has_value()) {
+        if (content_length.has_value() && content_length.value() > 0) {
             auto already_read{client_buf.size()};
-            auto remaining{content_length.value() > already_read ? content_length.value() - already_read : 0};
+            auto remaining{(content_length.value() > already_read) ? content_length.value() - already_read : 0};
 
-            if (remaining > 0) {
-                co_await async_read(client_socket, client_buf, transfer_exactly(remaining), use_awaitable);
+            if (already_read > 0) {
                 co_await async_write(server_socket, client_buf.data(), use_awaitable);
+                client_buf.consume(already_read);
             }
-            client_buf.consume(content_length.value());
+
+            if (remaining > 0)
+                co_await transfer_limited(client_socket, server_socket, remaining);
         }
 
         std::string resp_headers_str{co_await read_headers(server_socket, server_buf)};
         co_await async_write(client_socket, buffer(resp_headers_str), use_awaitable);
 
         auto resp_content_length{findContentLength(std::string_view{resp_headers_str})};
-        if (resp_content_length.has_value()) {
-            auto body_in_buf{server_buf.size()};  // часть тела уже в буфере
-            auto remaining{resp_content_length.value() > body_in_buf ? resp_content_length.value() - body_in_buf : 0};
 
-            if (body_in_buf > 0)
+        if (resp_content_length.has_value() && resp_content_length.value() > 0) {
+            auto body_in_buf{server_buf.size()};
+            auto remaining{(resp_content_length.value() > body_in_buf) ? resp_content_length.value() - body_in_buf : 0};
+
+            if (body_in_buf > 0) {
                 co_await async_write(client_socket, server_buf.data(), use_awaitable);
-
-            server_buf.consume(body_in_buf);  // очищаем
+                server_buf.consume(body_in_buf);
+            }
 
             if (remaining > 0)
                 co_await transfer_limited(server_socket, client_socket, remaining);
         } else
             co_await transfer_limited(server_socket, client_socket, std::nullopt);
-
     } catch (const std::exception &e) {
         error_code ec;
-        std::string err{"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"s};
+        auto err{"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"s};
         boost::asio::write(client_socket, buffer(err), ec);
     }
 

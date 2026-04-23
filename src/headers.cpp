@@ -42,7 +42,7 @@ std::optional<size_t> findContentLength(std::string_view rsp) {
             size_t content_length{};
             auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), content_length);
 
-            if (ec == std::errc())
+            if (ec == std::errc() && ptr == (value.data() + value.size()))
                 result = content_length;
             else
                 result = std::nullopt;
