@@ -1,4 +1,5 @@
-#include "headers.h"
+#include <coro_iter_headers.hpp>
+#include <headers.hpp>
 
 #include <ranges>
 #include <string_view>
@@ -7,15 +8,45 @@ using namespace std::string_view_literals;
 
 using Callback = std::function<void(std::string_view, std::string_view)>;
 
-
-void iterHeaders(std::string_view req, Callback&& callback) {
-  // code here
+void iterHeaders(std::string_view req, Callback &&callback) {
+    auto coro{coro_iter_headers::coroIterHeaders(req, std::move(callback))};
+    while (coro.next())
+        ;
 }
 
 std::pair<std::string, std::string> findHostPort(std::string_view req) {
-  // code here
+    std::string host{};
+    std::string port{"80"};
+
+    iterHeaders(req, [&](std::string_view name, std::string_view value) {
+        if (name == "Host") {
+            auto pos = value.find(':');
+            if (pos != std::string_view::npos) {
+                host = std::string(value.substr(0, pos));
+                port = std::string(value.substr(pos + 1));
+            } else
+                host = std::string(value);
+        }
+    });
+
+    if (host.empty())
+        throw std::runtime_error("Host header not found");
+
+    return {host, port};
 }
 
 std::optional<size_t> findContentLength(std::string_view rsp) {
-  // code here
+    std::optional<size_t> result;
+    iterHeaders(rsp, [&](std::string_view name, std::string_view value) {
+        if (name == "Content-Length") {
+            size_t content_length{};
+            auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), content_length);
+
+            if (ec == std::errc() && ptr == (value.data() + value.size()))
+                result = content_length;
+            else
+                result = std::nullopt;
+        }
+    });
+    return result;
 }
